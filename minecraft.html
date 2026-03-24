@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Minecraft Style City</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #87ceeb; /* 天空藍 */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        /* 遊戲暫停與開始的遮罩畫面 */
+        #blocker {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+            z-index: 10;
+        }
+        
+        #instructions {
+            background-color: rgba(255, 255, 255, 0.1);
+            padding: 40px 60px;
+            border-radius: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(5px);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        #instructions:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+            transform: scale(1.02);
+        }
+        
+        /* 螢幕正中央的準星 */
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            pointer-events: none; /* 確保準星不會阻擋滑鼠點擊 */
+            z-index: 5;
+            text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+    </style>
+
+    <!-- Three.js Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="blocker">
+        <div id="instructions">
+            <span style="font-size:40px; font-weight:bold; letter-spacing: 2px;">點擊以開始遊戲</span>
+            <br /><br />
+            <div style="font-size:18px; line-height:2.0; text-align: left; display: inline-block;">
+                🕹️ <b>[W] [A] [S] [D]</b> : 移動<br/>
+                🚀 <b>[Space]</b> : 跳躍<br/>
+                👁️ <b>[滑鼠]</b> : 控制視角<br/>
+                ⛏️ <b>[滑鼠左鍵]</b> : 敲打/破壞方塊<br/>
+                🧱 <b>[滑鼠右鍵]</b> : 放置隨機方塊
+            </div>
+        </div>
+    </div>
+    <div id="crosshair">+</div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+        // --- 基本變數設定 ---
+        const objects = [];      // 儲存所有可互動（可敲打）的方塊
+        const worldMap = new Map(); // 空間雜湊表，用於快速碰撞偵測
+
+        let camera, scene, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let canJump = false;
+
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        // 射線投射器（用於敲打方塊）
+        const raycaster = new THREE.Raycaster();
+
+        // --- 初始化 ---
+        init();
+        animate();
+
+        function init() {
+            // 1. 場景設定
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb); // 天空藍
+            scene.fog = new THREE.Fog(0x87ceeb, 20, 60);  // 加入霧氣隱藏邊界
+
+            // 2. 燈光設定
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // 環境光
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8); // 太陽光
+            dirLight.position.set(100, 200, 50);
+            scene.add(dirLight);
+
+            const dirLight2 = new THREE.DirectionalLight(0xaaaaaa, 0.3); // 補光
+            dirLight2.position.set(-100, 100, -50);
+            scene.add(dirLight2);
+
+            // 3. 相機與渲染器設定
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.y = 5; // 初始重生高度
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            document.body.appendChild(renderer.domElement);
+
+            // 4. 控制器 (第一人稱)
+            controls = new PointerLockControls(camera, document.body);
+
+            const blocker = document.getElementById('blocker');
+            const instructions = document.getElementById('instructions');
+
+            // 點擊畫面鎖定滑鼠並開始遊戲
+            instructions.addEventListener('click', function () {
+                controls.lock();
+            });
+
+            controls.addEventListener('lock', function () {
+                instructions.style.display = 'none';
+                blocker.style.display = 'none';
+            });
+
+            controls.addEventListener('unlock', function () {
+                blocker.style.display = 'flex';
+                instructions.style.display = '';
+            });
+
+            scene.add(controls.getObject());
+
+            // 5. 綁定鍵盤控制
+            const onKeyDown = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp':
+                    case 'KeyW': moveForward = true; break;
+                    case 'ArrowLeft':
+                    case 'KeyA': moveLeft = true; break;
+                    case 'ArrowDown':
+                    case 'KeyS': moveBackward = true; break;
+                    case 'ArrowRight':
+                    case 'KeyD': moveRight = true; break;
+                    case 'Space':
+                        if (canJump === true) velocity.y += 12.0; // 跳躍力度
+                        canJump = false;
+                        break;
+                }
+            };
+
+            const onKeyUp = function (event) {
+                switch (event.code) {
+                    case 'ArrowUp':
+                    case 'KeyW': moveForward = false; break;
+                    case 'ArrowLeft':
+                    case 'KeyA': moveLeft = false; break;
+                    case 'ArrowDown':
+                    case 'KeyS': moveBackward = false; break;
+                    case 'ArrowRight':
+                    case 'KeyD': moveRight = false; break;
+                }
+            };
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            // 6. 綁定滑鼠左鍵敲打與右鍵放置事件
+            window.addEventListener('mousedown', onMouseClick);
+            // 隱藏右鍵選單，避免干擾遊戲體驗
+            window.addEventListener('contextmenu', e => e.preventDefault());
+
+            // 7. 視窗縮放處理
+            window.addEventListener('resize', onWindowResize);
+
+            // 8. 建立城市
+            generateCity();
+        }
+
+        // --- 城市生成演算法 ---
+        function generateCity() {
+            // 共用幾何體以提升效能
+            const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+
+            // 定義各種材質 (Minecraft 風格色彩)
+            const matGrass = new THREE.MeshStandardMaterial({ color: 0x55aa55, roughness: 0.9 });
+            const matRoad = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.9 });
+            const matBuilding1 = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.7 });
+            const matBuilding2 = new THREE.MeshStandardMaterial({ color: 0x8899aa, roughness: 0.7 });
+            const matGlass = new THREE.MeshStandardMaterial({ color: 0x87CEFA, transparent: true, opacity: 0.7, roughness: 0.2 });
+            const matWood = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 1.0 });
+            const matLeaves = new THREE.MeshStandardMaterial({ color: 0x3a7a3a, roughness: 0.9 });
+
+            const mapSize = 35; // 地圖半徑（實際寬度為 70x70）
+
+            for (let x = -mapSize; x <= mapSize; x++) {
+                for (let z = -mapSize; z <= mapSize; z++) {
+                    const absX = Math.abs(x);
+                    const absZ = Math.abs(z);
+                    
+                    // 規劃道路網格 (每 15 格有一條寬度 5 的道路)
+                    const isRoad = (absX % 15 < 3) || (absZ % 15 < 3);
+                    
+                    // 區塊劃分
+                    const blockX = Math.floor(x / 15);
+                    const blockZ = Math.floor(z / 15);
+                    // 簡單的偽隨機雜湊，讓每個街區生成固定風格的建築
+                    const bHash = Math.abs(Math.sin(blockX * 12.9898 + blockZ * 78.233) * 43758.5453);
+                    const bRandom = bHash - Math.floor(bHash);
+                    
+                    const localX = absX % 15;
+                    const localZ = absZ % 15;
+                    
+                    // 建築物只蓋在街區的中央區域
+                    const isBuildingArea = (!isRoad && localX >= 4 && localX <= 12 && localZ >= 4 && localZ <= 12 && bRandom > 0.3);
+
+                    // 1. 鋪設底層地板 (y = -1)
+                    const floorMat = isRoad ? matRoad : matGrass;
+                    addBlock(boxGeometry, floorMat, x, -1, z);
+                    
+                    // 2. 生成建築物或樹木
+                    if (isBuildingArea) {
+                        const height = Math.floor(bRandom * 15) + 4; // 高度 4 到 18 層
+                        const bMat = (bRandom > 0.7) ? matBuilding2 : matBuilding1;
+                        
+                        for (let y = 0; y < height; y++) {
+                            let useMat = bMat;
+                            // 裝飾窗戶玻璃 (交錯排列)
+                            if (y > 1 && y < height - 1 && ((localX % 2 === 0) || (localZ % 2 === 0))) {
+                                useMat = matGlass;
+                            }
+                            addBlock(boxGeometry, useMat, x, y, z);
+                        }
+                    } else if (!isRoad && Math.random() < 0.02) {
+                        // 隨機在草地上生成小樹
+                        addBlock(boxGeometry, matWood, x, 0, z); // 樹幹
+                        addBlock(boxGeometry, matWood, x, 1, z); // 樹幹
+                        addBlock(boxGeometry, matLeaves, x, 2, z); // 樹葉中心
+                        addBlock(boxGeometry, matLeaves, x+1, 2, z);
+                        addBlock(boxGeometry, matLeaves, x-1, 2, z);
+                        addBlock(boxGeometry, matLeaves, x, 2, z+1);
+                        addBlock(boxGeometry, matLeaves, x, 2, z-1);
+                        addBlock(boxGeometry, matLeaves, x, 3, z); // 樹頂
+                    }
+                }
+            }
+        }
+
+        // --- 輔助函式：新增方塊到世界中 ---
+        function addBlock(geometry, material, x, y, z) {
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            
+            // 效能優化：靜態物件關閉自動矩陣更新
+            mesh.matrixAutoUpdate = false;
+            mesh.updateMatrix();
+            
+            scene.add(mesh);
+            objects.push(mesh);
+            
+            // 寫入空間雜湊表，供碰撞偵測使用
+            worldMap.set(`${Math.round(x)},${Math.round(y)},${Math.round(z)}`, mesh);
+        }
+
+        // --- 敲打物件與放置物件 (滑鼠點擊) ---
+        function onMouseClick(event) {
+            if (!controls.isLocked) return;
+            if (event.button !== 0 && event.button !== 2) return; // 只接受滑鼠左鍵與右鍵
+
+            // 從螢幕中心 (準星處) 發射射線
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            
+            const intersects = raycaster.intersectObjects(objects, false);
+
+            if (intersects.length > 0) {
+                // 限制敲打/放置距離 (例如：最多只能打到 6 格遠的方塊)
+                if (intersects[0].distance < 6) {
+                    const hit = intersects[0];
+                    const hitBlock = hit.object;
+                    
+                    if (event.button === 0) {
+                        // 左鍵：破壞方塊
+                        scene.remove(hitBlock);
+                        
+                        const index = objects.indexOf(hitBlock);
+                        if (index > -1) objects.splice(index, 1);
+                        
+                        const key = `${Math.round(hitBlock.position.x)},${Math.round(hitBlock.position.y)},${Math.round(hitBlock.position.z)}`;
+                        worldMap.delete(key);
+                    } 
+                    else if (event.button === 2) {
+                        // 右鍵：放置方塊
+                        // 利用射線擊中面的法向量 (normal) 來決定新方塊的位置
+                        const normal = hit.face.normal;
+                        const placeX = Math.round(hitBlock.position.x + normal.x);
+                        const placeY = Math.round(hitBlock.position.y + normal.y);
+                        const placeZ = Math.round(hitBlock.position.z + normal.z);
+                        
+                        const key = `${placeX},${placeY},${placeZ}`;
+                        
+                        // 檢查該位置是否已經有方塊
+                        if (!worldMap.has(key)) {
+                            // 簡單檢查：避免把方塊放在自己身上而卡住
+                            const pos = controls.getObject().position;
+                            const dist = Math.sqrt(Math.pow(placeX - pos.x, 2) + Math.pow(placeY - (pos.y - 0.8), 2) + Math.pow(placeZ - pos.z, 2));
+                            
+                            // 若距離玩家夠遠，才允許放置
+                            if (dist > 1.5) {
+                                const randomColor = Math.random() * 0xffffff;
+                                const randomMat = new THREE.MeshStandardMaterial({ color: randomColor, roughness: 0.8 });
+                                const boxGeometry = new THREE.BoxGeometry(1, 1, 1);
+                                addBlock(boxGeometry, randomMat, placeX, placeY, placeZ);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 視窗縮放 ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 簡單的水平碰撞偵測 ---
+        function checkHorizontalCollision(pos) {
+            const px = Math.round(pos.x);
+            const pz = Math.round(pos.z);
+            
+            // 修正：檢查玩家身體的高度 (腿部與頭部)
+            // 由於 pos.y 是眼睛高度，站立於方塊上時大約離方塊頂部 1.6
+            // 改用 Math.round 並微調高度，避免誤判腳底下踩著的地板為阻擋牆壁
+            const yLegs = Math.round(pos.y - 1.0);
+            const yHead = Math.round(pos.y - 0.2);
+
+            if (worldMap.has(`${px},${yLegs},${pz}`) || 
+                worldMap.has(`${px},${yHead},${pz}`)) {
+                return true;
+            }
+            return false;
+        }
+
+        // --- 動畫與物理迴圈 ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+
+            if (controls.isLocked === true) {
+                const delta = (time - prevTime) / 1000;
+
+                // 應用摩擦力 (針對相機的本地速度)
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+                velocity.y -= 35.0 * delta; // 重力
+
+                // 確定移動方向 (W為前進=正向，D為右=正向)
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize(); // 確保斜向移動速度一致
+
+                const moveSpeed = 50.0;
+                // velocity.z 控制前後 (正值為前進)
+                if (moveForward || moveBackward) velocity.z += direction.z * moveSpeed * delta;
+                // velocity.x 控制左右 (正值為向右)
+                if (moveLeft || moveRight) velocity.x += direction.x * moveSpeed * delta;
+
+                const pos = controls.getObject().position;
+                
+                // 記錄移動前的世界座標
+                const oldX = pos.x;
+                const oldZ = pos.z;
+
+                // 修正：使用 PointerLockControls 內建的方法，這會根據玩家當前「面向的視角」來計算正確的移動方向
+                controls.moveRight(velocity.x * delta);
+                controls.moveForward(velocity.z * delta);
+
+                const newX = pos.x;
+                const newZ = pos.z;
+
+                // 1. 處理 X 軸移動與碰撞 (將 Z 恢復為舊值單獨測試 X 軸)
+                pos.x = newX;
+                pos.z = oldZ;
+                if (checkHorizontalCollision(pos)) {
+                    pos.x = oldX; // 發生碰撞則退回
+                }
+
+                // 2. 處理 Z 軸移動與碰撞 (保留 X 的測試結果單獨測試 Z 軸)
+                const finalX = pos.x;
+                pos.x = finalX;
+                pos.z = newZ;
+                if (checkHorizontalCollision(pos)) {
+                    pos.z = oldZ; // 發生碰撞則退回
+                }
+                
+                pos.x = finalX; // 確保 X 為正確值
+
+                // 3. 處理 Y 軸 (重力/跳躍) 與地面碰撞
+                pos.y += velocity.y * delta;
+                
+                // 尋找玩家正下方最高的方塊
+                let groundY = -Infinity;
+                const px = Math.round(pos.x);
+                const pz = Math.round(pos.z);
+                
+                // 從玩家頭頂往下掃描方塊
+                for (let i = Math.ceil(pos.y); i >= -10; i--) {
+                    if (worldMap.has(`${px},${i},${pz}`)) {
+                        groundY = i + 0.5; // 方塊的頂部表面
+                        break;
+                    }
+                }
+
+                // 若低於或等於地面高度，則停止掉落 (玩家身高約 1.6 單元)
+                if (pos.y - 1.6 <= groundY) {
+                    velocity.y = Math.max(0, velocity.y); 
+                    pos.y = groundY + 1.6;
+                    canJump = true;
+                }
+
+                // 防呆機制：若掉出世界外，強制拉回重生點
+                if (pos.y < -20) {
+                    pos.set(0, 10, 0);
+                    velocity.set(0,0,0);
+                }
+            }
+
+            prevTime = time;
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+</html>
