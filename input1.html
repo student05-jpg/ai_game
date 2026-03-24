@@ -1,0 +1,286 @@
+import React, { useState, useEffect, useCallback } from 'react';
+
+// 24 個基本的速成/倉頡單一字碼字根
+const SANGJIE_RADICALS = [
+  { char: '日', code: 'a' }, { char: '月', code: 'b' },
+  { char: '金', code: 'c' }, { char: '木', code: 'd' },
+  { char: '水', code: 'e' }, { char: '火', code: 'f' },
+  { char: '土', code: 'g' }, { char: '竹', code: 'h' },
+  { char: '戈', code: 'i' }, { char: '十', code: 'j' },
+  { char: '大', code: 'k' }, { char: '中', code: 'l' },
+  { char: '一', code: 'm' }, { char: '弓', code: 'n' },
+  { char: '人', code: 'o' }, { char: '心', code: 'p' },
+  { char: '手', code: 'q' }, { char: '口', code: 'r' },
+  { char: '尸', code: 's' }, { char: '廿', code: 't' },
+  { char: '山', code: 'u' }, { char: '女', code: 'v' },
+  { char: '田', code: 'w' }, { char: '卜', code: 'y' }
+];
+
+// 虛擬鍵盤佈局
+const KEYBOARD_ROWS = [
+  ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+  ['Z', 'X', 'C', 'V', 'B', 'N', 'M']
+];
+
+export default function App() {
+  const [playerHp, setPlayerHp] = useState(100);
+  const [dinoHp, setDinoHp] = useState(100);
+  const [currentQ, setCurrentQ] = useState(null);
+  const [status, setStatus] = useState('playing'); // 'playing', 'win', 'lose'
+  
+  // 動畫與特效狀態
+  const [dinoFlash, setDinoFlash] = useState(false);
+  const [playerShake, setPlayerShake] = useState(false);
+  const [dinoDamageText, setDinoDamageText] = useState(false);
+  const [playerDamageText, setPlayerDamageText] = useState(false);
+  const [pressedKey, setPressedKey] = useState(null);
+
+  // 初始化遊戲
+  const initGame = useCallback(() => {
+    setPlayerHp(100);
+    setDinoHp(100);
+    setStatus('playing');
+    pickNextQuestion();
+  }, []);
+
+  // 選擇下一條問題
+  const pickNextQuestion = () => {
+    const randomQuestion = SANGJIE_RADICALS[Math.floor(Math.random() * SANGJIE_RADICALS.length)];
+    setCurrentQ(randomQuestion);
+  };
+
+  useEffect(() => {
+    if (!currentQ) {
+      pickNextQuestion();
+    }
+  }, [currentQ]);
+
+  // 處理玩家輸入
+  const handleInput = useCallback((key) => {
+    if (status !== 'playing') return;
+    
+    const lowerKey = key.toLowerCase();
+    if (!/^[a-z]$/.test(lowerKey)) return;
+
+    setPressedKey(lowerKey);
+    setTimeout(() => setPressedKey(null), 150);
+
+    if (lowerKey === currentQ.code) {
+      // 答案正確：恐龍扣血
+      setDinoHp(prev => {
+        const newHp = Math.max(0, prev - 10);
+        if (newHp === 0) setStatus('win');
+        return newHp;
+      });
+      
+      // 觸發恐龍受傷特效
+      setDinoFlash(true);
+      setDinoDamageText(true);
+      setTimeout(() => setDinoFlash(false), 300);
+      setTimeout(() => setDinoDamageText(false), 800);
+      
+      pickNextQuestion();
+    } else {
+      // 答案錯誤：玩家扣血
+      setPlayerHp(prev => {
+        const newHp = Math.max(0, prev - 10);
+        if (newHp === 0) setStatus('lose');
+        return newHp;
+      });
+      
+      // 觸發玩家受傷特效
+      setPlayerShake(true);
+      setPlayerDamageText(true);
+      setTimeout(() => setPlayerShake(false), 400);
+      setTimeout(() => setPlayerDamageText(false), 800);
+    }
+  }, [currentQ, status]);
+
+  // 監聽實體鍵盤
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.repeat) return;
+      handleInput(e.key);
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleInput]);
+
+  // 計算血條顏色
+  const getHealthColor = (hp) => {
+    if (hp > 50) return 'bg-green-500';
+    if (hp > 20) return 'bg-yellow-400';
+    return 'bg-red-500';
+  };
+
+  return (
+    <div className={`min-h-screen bg-slate-900 flex flex-col items-center justify-between font-sans text-slate-100 overflow-hidden ${playerShake ? 'animate-shake' : ''}`}>
+      
+      {/* 自訂 CSS 動畫 */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          20% { transform: translateX(-10px) rotate(-1deg); }
+          40% { transform: translateX(10px) rotate(1deg); }
+          60% { transform: translateX(-10px) rotate(-1deg); }
+          80% { transform: translateX(10px) rotate(1deg); }
+        }
+        .animate-shake {
+          animation: shake 0.4s ease-in-out;
+        }
+        @keyframes float-up {
+          0% { opacity: 1; transform: translateY(0) scale(1); }
+          100% { opacity: 0; transform: translateY(-40px) scale(1.2); }
+        }
+        .animate-float-up {
+          animation: float-up 0.8s ease-out forwards;
+        }
+      `}} />
+
+      {/* 頂部標題與血條區 */}
+      <div className="w-full max-w-2xl px-4 pt-6 pb-2">
+        <h1 className="text-3xl font-bold text-center text-emerald-400 mb-6 tracking-wider shadow-sm">
+          速成字碼大挑戰
+        </h1>
+        
+        <div className="flex justify-between items-center gap-4 bg-slate-800 p-4 rounded-2xl shadow-lg border border-slate-700">
+          {/* 玩家血條 */}
+          <div className="flex-1 relative">
+            <div className="flex justify-between mb-1">
+              <span className="font-bold text-blue-300">玩家</span>
+              <span className="font-mono">{playerHp} / 100</span>
+            </div>
+            <div className="h-4 w-full bg-slate-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all duration-300 ease-out ${getHealthColor(playerHp)}`}
+                style={{ width: `${playerHp}%` }}
+              />
+            </div>
+            {playerDamageText && (
+              <div className="absolute top-8 left-1/2 -translate-x-1/2 text-red-500 font-bold text-2xl animate-float-up pointer-events-none z-10">
+                -10
+              </div>
+            )}
+          </div>
+
+          <div className="text-2xl font-black text-slate-500 px-2">VS</div>
+
+          {/* 恐龍血條 */}
+          <div className="flex-1 relative">
+            <div className="flex justify-between mb-1 flex-row-reverse">
+              <span className="font-bold text-orange-400">暴龍</span>
+              <span className="font-mono">{dinoHp} / 100</span>
+            </div>
+            <div className="h-4 w-full bg-slate-700 rounded-full overflow-hidden flex justify-end">
+              <div 
+                className={`h-full transition-all duration-300 ease-out ${getHealthColor(dinoHp)}`}
+                style={{ width: `${dinoHp}%` }}
+              />
+            </div>
+            {dinoDamageText && (
+              <div className="absolute top-8 left-1/2 -translate-x-1/2 text-red-500 font-bold text-2xl animate-float-up pointer-events-none z-10">
+                -10
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 戰鬥區 (顯示恐龍與字碼) */}
+      <div className="flex-1 flex items-center justify-center w-full relative">
+        <div className={`relative transition-all duration-200 ${dinoFlash ? 'brightness-200 sepia hue-rotate-180 scale-95' : 'scale-100 hover:scale-105'}`}>
+          {/* 恐龍 SVG */}
+          <svg viewBox="0 0 200 250" className="w-64 h-80 md:w-80 md:h-96 drop-shadow-[0_10px_15px_rgba(34,197,94,0.2)]">
+            {/* 尾巴 */}
+            <path d="M 140 150 Q 190 150 190 100 Q 170 140 140 170" fill="#4ade80" />
+            {/* 後腿 */}
+            <rect x="110" y="170" width="15" height="40" rx="7" fill="#22c55e" />
+            {/* 前腿 */}
+            <rect x="80" y="180" width="15" height="40" rx="7" fill="#4ade80" />
+            {/* 身體 */}
+            <ellipse cx="100" cy="130" rx="45" ry="60" fill="#4ade80" />
+            {/* 頭部 */}
+            <path d="M 70 80 Q 50 30 90 30 L 130 30 Q 140 30 140 50 L 140 70 Q 140 90 110 90 Z" fill="#4ade80" />
+            {/* 眼睛 */}
+            <circle cx="85" cy="50" r="5" fill="#1e293b" />
+            <circle cx="83" cy="48" r="2" fill="white" />
+            {/* 嘴巴 */}
+            <path d="M 50 60 L 80 60" stroke="#1e293b" strokeWidth="2.5" strokeLinecap="round" />
+            {/* 手 */}
+            <path d="M 60 120 Q 40 120 40 135" stroke="#22c55e" strokeWidth="6" strokeLinecap="round" fill="none" />
+            
+            {/* 胸口徽章與文字 */}
+            <g className="drop-shadow-lg">
+              <circle cx="100" cy="135" r="32" fill="white" stroke="#166534" strokeWidth="4" />
+              <text 
+                x="100" 
+                y="148" 
+                fontSize="36" 
+                fontWeight="900" 
+                textAnchor="middle" 
+                fill="#166534"
+                className="font-sans"
+              >
+                {currentQ?.char}
+              </text>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+      {/* 底部虛擬鍵盤 */}
+      <div className="w-full max-w-3xl px-2 pb-8 pt-4">
+        <div className="bg-slate-800/50 p-3 md:p-6 rounded-3xl border border-slate-700 backdrop-blur-sm">
+          <div className="text-center text-slate-400 mb-3 text-sm">
+            請輸入胸口文字的速成字碼（英文字母）
+          </div>
+          {KEYBOARD_ROWS.map((row, rowIndex) => (
+            <div key={rowIndex} className="flex justify-center gap-1 md:gap-2 mb-2">
+              {row.map(key => {
+                const isPressed = pressedKey === key.toLowerCase();
+                return (
+                  <button
+                    key={key}
+                    onClick={() => handleInput(key)}
+                    className={`
+                      relative flex items-center justify-center 
+                      w-8 h-12 sm:w-12 sm:h-14 md:w-14 md:h-16
+                      text-lg md:text-2xl font-bold rounded-lg md:rounded-xl shadow-md
+                      transition-all duration-100 select-none touch-manipulation
+                      ${isPressed 
+                        ? 'bg-emerald-500 text-white transform scale-95 shadow-inner' 
+                        : 'bg-slate-700 text-slate-200 hover:bg-slate-600 border-b-4 border-slate-900 active:border-b-0 active:translate-y-1'
+                      }
+                    `}
+                  >
+                    {key}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 遊戲結束蓋板 */}
+      {status !== 'playing' && (
+        <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center z-50">
+          <h2 className={`text-6xl md:text-8xl font-black tracking-widest mb-8 drop-shadow-2xl ${status === 'win' ? 'text-yellow-400' : 'text-red-500'}`}>
+            {status === 'win' ? '勝利' : '失敗'}
+          </h2>
+          <p className="text-xl text-slate-300 mb-8">
+            {status === 'win' ? '你成功擊敗了暴龍！' : '你的血量已耗盡！'}
+          </p>
+          <button 
+            onClick={initGame}
+            className="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-slate-900 text-2xl font-bold rounded-2xl shadow-[0_6px_0_rgb(5,150,105)] active:shadow-none active:translate-y-2 transition-all"
+          >
+            再玩一次
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
